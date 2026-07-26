@@ -5,7 +5,7 @@ import time
 
 st.set_page_config(page_title="MEXC Sınırsız Piyasa Tarayıcısı", layout="wide")
 
-st.title("⚡ MEXC Borsası Tüm Coinler Tarayıcısı ve İşlem Asistanı")
+st.title("⚡ MEXC İşlem Asistanı")
 st.markdown("Bu panel **MEXC borsasındaki tüm USDT coinlerini** anında tarar ve her **5 dakikada bir** güncellenir.")
 
 @st.cache_data(ttl=280)
