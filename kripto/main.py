@@ -1,82 +1,63 @@
 import ccxt
 import pandas as pd
-import ta
 import streamlit as st
 import time
 
-st.set_page_config(page_title="Otomatik Binance Botu", layout="wide")
+st.set_page_config(page_title="MEXC Sınırsız Piyasa Tarayıcısı", layout="wide")
 
-st.title("⚡ Binance Otomatik Trade Sinyal Paneli")
-st.markdown("Bu panel tamamen otomatik çalışır ve her 30 saniyede bir kendini günceller.")
+st.title("⚡ MEXC Borsası Tüm Coinler Tarayıcısı ve İşlem Asistanı")
+st.markdown("Bu panel **MEXC borsasındaki tüm USDT coinlerini** anında tarar ve her **5 dakikada bir** güncellenir.")
 
-exchange = ccxt.binance({
-    'enableRateLimit': True,
-    'options': {'defaultType': 'spot'}
-})
-
+@st.cache_data(ttl=280)
 def get_market_data():
     try:
+        # MEXC borsasına bağlanıyoruz
+        exchange = ccxt.mexc({
+            'enableRateLimit': True,
+            'options': {'defaultType': 'spot'}
+        })
+        
         markets = exchange.load_markets()
-        semboller = [s for s in markets if s.endswith('/USDT')][:20]
+        semboller = [s for s in markets if s.endswith('/USDT')]
+        
+        # Takılmayı önlemek için toplu veri çekme fonksiyonu kullanıyoruz
+        tickers = exchange.fetch_tickers(semboller)
         
         rapor = []
         for symbol in semboller:
             try:
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1h', limit=50)
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                
-                rsi_indicator = ta.momentum.RSIIndicator(close=df['close'], window=14)
-                df['RSI'] = rsi_indicator.rsi()
-                
-                macd = ta.trend.MACD(close=df['close'])
-                df['MACD'] = macd.macd()
-                df['MACD_Signal'] = macd.macd_signal()
-                
-                df['EMA_20'] = ta.trend.ema_indicator(close=df['close'], window=20)
-                df['EMA_50'] = ta.trend.ema_indicator(close=df['close'], window=50)
-                
-                son_fiyat = df['close'].iloc[-1]
-                son_rsi = df['RSI'].iloc[-1]
-                son_macd = df['MACD'].iloc[-1]
-                son_macd_signal = df['MACD_Signal'].iloc[-1]
-                ema_20 = df['EMA_20'].iloc[-1]
-                ema_50 = df['EMA_50'].iloc[-1]
-                
-                puan = 0
-                if son_rsi < 35:
-                    puan += 2
-                elif son_rsi > 65:
-                    puan -= 2
+                if symbol in tickers:
+                    ticker = tickers[symbol]
+                    son_fiyat = ticker.get('last')
+                    if not son_fiyat:
+                        continue
                     
-                if son_macd > son_macd_signal:
-                    puan += 1
-                else:
-                    puan -= 1
+                    degisim = ticker.get('percentage', 0)
+                    if degisim is None:
+                        degisim = 0
+                        
+                    sinyal = "🟢 LONG" if degisim >= 0 else "🔴 SHORT"
                     
-                if ema_20 > ema_50:
-                    puan += 1
-                else:
-                    puan -= 1
-                
-                if puan >= 3:
-                    sinyal = "🟢 GÜÇLÜ LONG"
-                elif puan == 1 or puan == 2:
-                    sinyal = "🟢 LONG"
-                elif puan <= -3:
-                    sinyal = "🔴 GÜÇLÜ SHORT"
-                elif puan == -1 or puan == -2:
-                    sinyal = "🔴 SHORT"
-                else:
-                    sinyal = "⚪ NÖTR / BEKLE"
-                
-                rapor.append({
-                    'Coin': symbol,
-                    'Fiyat ($)': round(son_fiyat, 4),
-                    'RSI': round(son_rsi, 2),
-                    'MACD Durumu': "Pozitif" if son_macd > son_macd_signal else "Negatif",
-                    'Trend (EMA)': "Yükseliş" if ema_20 > ema_50 else "Düşüş",
-                    'Sinyal / Tahmin': sinyal
-                })
+                    if "LONG" in sinyal:
+                        tp_degeri = son_fiyat * 1.025
+                        stop_degeri = son_fiyat * 0.985
+                        tahmini_kazanc = "100$ bütçe (5x) ile ~12.5$ kâr"
+                    else:
+                        tp_degeri = son_fiyat * 0.975
+                        stop_degeri = son_fiyat * 1.015
+                        tahmini_kazanc = "100$ bütçe (5x) ile ~12.5$ kâr"
+
+                    rapor.append({
+                        'Coin': symbol,
+                        'Fiyat ($)': round(float(son_fiyat), 6),
+                        '24s Değişim (%)': round(float(degisim), 2),
+                        'Sinyal / Tahmin': sinyal,
+                        'Önerilen İşlem': "LONG (AL)" if "LONG" in sinyal else "SHORT (SAT)",
+                        'Giriş Fiyatı ($)': round(float(son_fiyat), 6),
+                        'TP (Hedef) ($)': round(tp_degeri, 6),
+                        'STOP (Zarar Durdur) ($)': round(stop_degeri, 6),
+                        'Tahmini Kâr Potansiyeli': tahmini_kazanc
+                    })
             except Exception:
                 continue
                 
@@ -84,22 +65,47 @@ def get_market_data():
     except Exception as e:
         return pd.DataFrame()
 
+st.sidebar.header("🔍 MEXC Coin Arama Paneli")
+arama_input = st.sidebar.text_input("Dilediğiniz Coini Yazın (Örn: BTC, MEME, cüzdan coinleri):", "").upper()
+
 durum_alani = st.empty()
 tablo_alani = st.empty()
 
-durum_alani.info("🔄 Binance verileri yükleniyor...")
+durum_alani.info("🔄 MEXC borsasındaki tüm coinler anında taranıyor, lütfen bekleyin...")
 
 df_sonuc = get_market_data()
 
 if not df_sonuc.empty:
-    tablo_alani.dataframe(df_sonuc, use_container_width=True)
+    durum_alani.empty()
+    if arama_input:
+        filtrelenmis_df = df_sonuc[df_sonuc['Coin'].str.contains(arama_input)]
+        if not filtrelenmis_df.empty:
+            st.success("🎯 '{}' MEXC'de bulundu! İşlem stratejisi:".format(arama_input))
+            st.dataframe(filtrelenmis_df, use_container_width=True)
+            
+            for index, row in filtrelenmis_df.iterrows():
+                st.markdown("### 📊 **{} Detaylı Strateji Paneli**".format(row['Coin']))
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Anlık Fiyat", "{} $".format(row['Fiyat ($)']))
+                col2.metric("Önerilen İşlem", row['Önerilen İşlem'])
+                col3.metric("Hedef (TP)", "{} $".format(row['TP (Hedef) ($)']))
+                col4.metric("Stop Loss", "{} $".format(row['STOP (Zarar Durdur) ($)']))
+                st.info("💡 **Grafik Notu:** Potansiyel kazanç durumu: **{}**".format(row['Tahmini Kâr Potansiyeli']))
+        else:
+            st.warning("⚠️ Aradığınız coin MEXC listesinde bulunamadı. Tüm MEXC listesi aşağıdadır:")
+            st.dataframe(df_sonuc, use_container_width=True)
+    else:
+        st.markdown("### 📋 MEXC Tüm Coinler Listesi (Toplam: {} Coin)".format(len(df_sonuc)))
+        st.dataframe(df_sonuc, use_container_width=True)
 else:
-    tablo_alani.warning("⚠️ Veriler alınamadı.")
+    durum_alani.warning("⚠️ Veriler alınamadı. Ağ bağlantınızı kontrol edin.")
 
-for kalan_sure in range(30, 0, -1):
+for kalan_sure in range(300, 0, -1):
+    dakika = kalan_sure // 60
+    saniye = kalan_sure % 60
     durum_alani.markdown(
-    "⏳ **Otomatik yenilenmeye kalan süre:** `{}` saniye".format(kalan_sure)
-)
+        "⏳ **Otomatik yenilenmeye kalan süre:** `{} dakika {} saniye`".format(dakika, saniye)
+    )
     time.sleep(1)
 
 st.rerun()
